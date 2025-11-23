@@ -4,26 +4,26 @@ import numpy as np
 import joblib
 import os
 
-# Optional Gemini
+# Gemini (Optional)
 try:
     from google import generativeai as genai
     GEMINI_AVAILABLE = True
 except:
     GEMINI_AVAILABLE = False
 
-# -------------------------
+# -------------------------------------------------
 # PAGE CONFIG
-# -------------------------
+# -------------------------------------------------
 st.set_page_config(
     page_title="Ad Performance Predictor",
     page_icon="📊",
     layout="wide"
 )
 
-# -------------------------
-# DARK / LIGHT THEME
-# -------------------------
-theme = st.sidebar.radio("🌗 Theme Mode", ["Dark", "Light"], index=0)
+# -------------------------------------------------
+# THEME
+# -------------------------------------------------
+theme = st.sidebar.radio("🌗 Theme", ["Dark", "Light"], index=0)
 
 if theme == "Dark":
     st.markdown("""
@@ -46,23 +46,23 @@ else:
     </style>
     """, unsafe_allow_html=True)
 
-# -------------------------
+
+# -------------------------------------------------
 # LOAD ARTIFACTS FROM /app ONLY
-# -------------------------
+# -------------------------------------------------
 @st.cache_resource
 def load_artifacts():
     base_dir = os.path.dirname(os.path.abspath(__file__))
 
     model_path = os.path.join(base_dir, "ad_model.pkl")
     scaler_path = os.path.join(base_dir, "scaler.pkl")
-    label_path = os.path.join(base_dir, "label_encoder.pkl")
+    encoder_path = os.path.join(base_dir, "label_encoder.pkl")
 
-    artifacts = {
+    return {
         "model": joblib.load(model_path) if os.path.exists(model_path) else None,
         "scaler": joblib.load(scaler_path) if os.path.exists(scaler_path) else None,
-        "encoder": joblib.load(label_path) if os.path.exists(label_path) else None
+        "encoder": joblib.load(encoder_path) if os.path.exists(encoder_path) else None
     }
-    return artifacts
 
 artifacts = load_artifacts()
 model = artifacts["model"]
@@ -71,24 +71,23 @@ encoder = artifacts["encoder"]
 
 # Status
 if not all([model, scaler, encoder]):
-    st.error("❌ Model files not found in /app. Ensure `.pkl` files are next to app.py.")
+    st.error("❌ Model files not found in /app. Ensure .pkl files are inside the /app folder.")
 else:
     st.success("✅ Model Loaded Successfully!")
 
-st.title("📊 Ad Campaign Performance Predictor")
-st.write("Predict **High / Medium / Low** performance using campaign features.")
 
-# Expected features
+# -------------------------------------------------
+# CONSTANTS
+# -------------------------------------------------
 FEATURES = [
-    "Age","Gender","City","AdType",
-    "Budget","DurationSec","Impressions","CTR",
-    "Clicks","ConversionRate","Conversions"
+    "Age","Gender","City","AdType","Budget","DurationSec",
+    "Impressions","CTR","Clicks","ConversionRate","Conversions"
 ]
 
-# Encoding maps (same as training)
 GENDERS = ["Female","Male"]
 CITIES = ["Bangalore","Chennai","Delhi","Hyderabad","Kolkata","Mumbai"]
 ADTYPES = ["Carousel","Image","Shorts","Video"]
+
 
 def encode(df):
     df = df.copy()
@@ -97,26 +96,34 @@ def encode(df):
     df["AdType"] = df["AdType"].map({v:i for i,v in enumerate(ADTYPES)})
     return df
 
-# -------------------------
-# INPUT SECTION
-# -------------------------
-left, right = st.columns([1.3,1])
 
+# -------------------------------------------------
+# UI
+# -------------------------------------------------
+st.title("📊 Ad Campaign Performance Predictor")
+st.write("Predict **High / Medium / Low** ad performance using engagement & campaign attributes.")
+
+left, right = st.columns([1.3, 1])
+
+
+# -------------------------------------------------
+# LEFT: INPUT (CSV + MANUAL)
+# -------------------------------------------------
 with left:
-    st.subheader("📂 Upload CSV File (Batch Prediction)")
+    st.subheader("📂 Upload CSV (Batch Prediction)")
     csv_file = st.file_uploader("Upload CSV", type=["csv"])
     df_input = None
 
     if csv_file:
         try:
             df_input = pd.read_csv(csv_file)
-            st.success(f"Loaded {csv_file.name} — {df_input.shape[0]} rows")
+            st.success(f"Loaded {df_input.shape[0]} rows.")
             st.dataframe(df_input.head())
         except:
             st.error("Invalid CSV format.")
 
     st.markdown("---")
-    st.subheader("✏ Manual Single Input")
+    st.subheader("✏ Manual Input")
 
     with st.form("manual"):
         Age = st.number_input("Age", 18, 65, 30)
@@ -130,84 +137,99 @@ with left:
         Clicks = st.number_input("Clicks", 0, 1000000, int(Impressions*CTR/100))
         ConversionRate = st.number_input("Conversion Rate (%)", 0.0, 100.0, 0.8)
         Conversions = st.number_input("Conversions", 0, 1000000, int(Clicks*ConversionRate/100))
-        submit = st.form_submit_button("Use this input")
+        submit = st.form_submit_button("Use this Input")
 
         if submit:
             df_input = pd.DataFrame([{
                 "Age":Age,"Gender":Gender,"City":City,"AdType":AdType,
-                "Budget":Budget,"DurationSec":DurationSec,"Impressions":Impressions,
-                "CTR":CTR,"Clicks":Clicks,"ConversionRate":ConversionRate,"Conversions":Conversions
+                "Budget":Budget,"DurationSec":DurationSec,
+                "Impressions":Impressions,"CTR":CTR,"Clicks":Clicks,
+                "ConversionRate":ConversionRate,"Conversions":Conversions
             }])
-            st.success("✅ Manual Record Loaded")
+            st.success("✅ Manual Input Loaded")
             st.dataframe(df_input)
 
-# -------------------------
-# PREDICTION
-# -------------------------
+
+# -------------------------------------------------
+# RIGHT: PREDICTION
+# -------------------------------------------------
 with right:
-    st.subheader("🎯 Prediction Output")
+    st.subheader("🎯 Prediction")
 
     if df_input is not None and all([model, scaler, encoder]):
         if st.button("Run Prediction"):
-            # Ensure correct columns
-            df_proc = df_input.copy()
-            df_proc = encode(df_proc)
+            df_proc = encode(df_input.copy())
             df_proc = df_proc[FEATURES]
 
             X = df_proc.astype(float).values
             X_scaled = scaler.transform(X)
 
             preds = model.predict(X_scaled)
-            labels = encoder.inverse_transform(preds)
+            label = encoder.inverse_transform([preds[0]])[0]
 
-            st.success(f"📌 Predicted Performance: **{labels[0]}**")
+            st.success(f"📌 Predicted Performance: **{label}**")
 
-            # Probabilities
-            try:
-                probs = np.array(model.predict_proba(X_scaled)[0]).flatten()
+            # -------- SAFE PROBABILITIES --------
+            probs = None
+            if hasattr(model, "predict_proba"):
+                try:
+                    probs = model.predict_proba(X_scaled)[0]
+                except:
+                    probs = None
+
+            if probs is not None:
                 classes = list(encoder.classes_)
-                prob_df = pd.DataFrame({"Class":classes,"Probability":probs}).sort_values("Probability",ascending=False)
+                prob_df = pd.DataFrame({
+                    "Class": classes,
+                    "Probability": np.array(probs).flatten()
+                }).sort_values("Probability", ascending=False)
+
                 st.subheader("📊 Prediction Probabilities")
                 st.dataframe(prob_df)
-            except:
-                st.warning("Model does not support predict_proba()")
+            else:
+                st.info("⚠ This model does not provide probability outputs.")
 
-            # Batch download
+            # -------- BATCH DOWNLOAD --------
             if len(df_input) > 1:
                 df_out = df_input.copy()
-                df_out["Predicted_Performance"] = labels
+                df_out["Predicted_Performance"] = encoder.inverse_transform(preds)
                 st.download_button(
                     "Download Predictions CSV",
                     df_out.to_csv(index=False).encode("utf-8"),
                     "predictions.csv",
                     "text/csv"
                 )
+                st.dataframe(df_out.head())
 
-            # Gemini Insights
+            # -------- GEMINI INSIGHTS --------
             st.subheader("🤖 Gemini Insights")
-            if GEMINI_AVAILABLE and os.getenv("GEMINI_API_KEY"):
-                genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-                prompt = f"""
-                Ad Performance Prediction: {labels[0]}
-                Features: {df_input.iloc[0].to_dict()}
 
-                Provide:
-                1. Three reasons for this prediction
-                2. Three improvement suggestions
-                3. One catchy ad-line idea
-                Keep output concise.
-                """
+            if GEMINI_AVAILABLE and os.getenv("GEMINI_API_KEY"):
                 try:
-                    response = genai.generate_text(
-                        model="gemini-2.0-flash-lite",
-                        prompt=prompt
-                    )
+                    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+                    model_g = genai.GenerativeModel("gemini-2.0-flash-lite")
+
+                    prompt = f"""
+                    Prediction: {label}
+                    Features: {df_input.iloc[0].to_dict()}
+
+                    Provide:
+                    - 3 reasons for this prediction
+                    - 3 improvement suggestions
+                    - 1 short ad tagline
+                    """
+
+                    response = model_g.generate_content(prompt)
                     st.write(response.text)
+
                 except Exception as e:
                     st.error(f"Gemini Error: {e}")
             else:
-                st.info("Set GEMINI_API_KEY to enable insights.")
+                st.info("ℹ Set GEMINI_API_KEY to enable insights.")
 
-# Footer
+
+# -------------------------------------------------
+# FOOTER
+# -------------------------------------------------
 st.markdown("---")
-st.caption("Built with ❤️ | Ad Campaign Performance Predictor")
+st.caption("Built with ❤️ | Ad Performance Predictor")
