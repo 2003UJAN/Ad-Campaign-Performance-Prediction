@@ -4,170 +4,210 @@ import numpy as np
 import joblib
 import os
 
+# Optional Gemini
+try:
+    from google import generativeai as genai
+    GEMINI_AVAILABLE = True
+except:
+    GEMINI_AVAILABLE = False
+
 # -------------------------
 # PAGE CONFIG
 # -------------------------
 st.set_page_config(
-    page_title="Ad Campaign Performance Prediction",
+    page_title="Ad Performance Predictor",
     page_icon="📊",
-    layout="centered"
+    layout="wide"
 )
 
 # -------------------------
-# CUSTOM LIGHT / DARK THEMING
+# DARK / LIGHT THEME
 # -------------------------
-MODE = st.sidebar.radio("🌗 Theme Mode", ["Light", "Dark"])
+theme = st.sidebar.radio("🌗 Theme Mode", ["Dark", "Light"], index=0)
 
-if MODE == "Dark":
+if theme == "Dark":
     st.markdown("""
-        <style>
-            body, .stApp { background-color: #0e1117; color: #f0f0f0; }
-            .stTextInput>div>div>input { background-color: #1c1f26; color: #fff; }
-            .stSelectbox>div>div { background-color: #1c1f26; color: #fff; }
-            .stNumberInput>div>div>input { background-color: #1c1f26; color: #fff; }
-        </style>
+    <style>
+        .stApp { background-color: #0e1117; color: #E6EDF3; }
+        .stButton>button { background-color:#1f6feb; color:white; border-radius:6px; }
+        .stTextInput>div>div>input,
+        .stNumberInput>div>div>input,
+        .stSelectbox>div>div {
+            background-color:#161b22;
+            color:#E6EDF3;
+        }
+    </style>
     """, unsafe_allow_html=True)
 else:
     st.markdown("""
-        <style>
-            body, .stApp { background-color: #f8f9fa; color: #000; }
-        </style>
+    <style>
+        .stApp { background-color: #FFFFFF; color: #111827; }
+        .stButton>button { background-color:#2563EB; color:white; border-radius:6px; }
+    </style>
     """, unsafe_allow_html=True)
 
-
 # -------------------------
-# ARTIFACT LOADER
+# LOAD ARTIFACTS FROM /app ONLY
 # -------------------------
 @st.cache_resource
 def load_artifacts():
-    artifacts = {"model": None, "scaler": None, "le_target": None}
+    base_dir = os.path.dirname(os.path.abspath(__file__))
 
-    try:
-        if os.path.exists("ad_model.pkl"):
-            artifacts["model"] = joblib.load("ad_model.pkl")
-    except Exception as e:
-        st.error(f"❌ Failed to load model: {e}")
+    model_path = os.path.join(base_dir, "ad_model.pkl")
+    scaler_path = os.path.join(base_dir, "scaler.pkl")
+    label_path = os.path.join(base_dir, "label_encoder.pkl")
 
-    try:
-        if os.path.exists("scaler.pkl"):
-            artifacts["scaler"] = joblib.load("scaler.pkl")
-    except Exception as e:
-        st.error(f"❌ Failed to load scaler: {e}")
-
-    try:
-        if os.path.exists("label_encoder.pkl"):
-            artifacts["le_target"] = joblib.load("label_encoder.pkl")
-    except Exception as e:
-        st.error(f"❌ Failed to load label encoder: {e}")
-
+    artifacts = {
+        "model": joblib.load(model_path) if os.path.exists(model_path) else None,
+        "scaler": joblib.load(scaler_path) if os.path.exists(scaler_path) else None,
+        "encoder": joblib.load(label_path) if os.path.exists(label_path) else None
+    }
     return artifacts
-
 
 artifacts = load_artifacts()
 model = artifacts["model"]
 scaler = artifacts["scaler"]
-le_target = artifacts["le_target"]
+encoder = artifacts["encoder"]
 
-# -------------------------
-# VALIDATION MESSAGE
-# -------------------------
-if not all([model, scaler, le_target]):
-    st.warning("⚠ Model files missing! Ensure **ad_model.pkl**, **scaler.pkl**, and **label_encoder.pkl** are in the same directory.")
+# Status
+if not all([model, scaler, encoder]):
+    st.error("❌ Model files not found in /app. Ensure `.pkl` files are next to app.py.")
 else:
     st.success("✅ Model Loaded Successfully!")
 
-
-# -------------------------
-# PAGE HEADER
-# -------------------------
 st.title("📊 Ad Campaign Performance Predictor")
-st.write("Enter campaign details below to predict performance (High / Medium / Low).")
+st.write("Predict **High / Medium / Low** performance using campaign features.")
 
+# Expected features
+FEATURES = [
+    "Age","Gender","City","AdType",
+    "Budget","DurationSec","Impressions","CTR",
+    "Clicks","ConversionRate","Conversions"
+]
+
+# Encoding maps (same as training)
+GENDERS = ["Female","Male"]
+CITIES = ["Bangalore","Chennai","Delhi","Hyderabad","Kolkata","Mumbai"]
+ADTYPES = ["Carousel","Image","Shorts","Video"]
+
+def encode(df):
+    df = df.copy()
+    df["Gender"] = df["Gender"].map({v:i for i,v in enumerate(GENDERS)})
+    df["City"] = df["City"].map({v:i for i,v in enumerate(CITIES)})
+    df["AdType"] = df["AdType"].map({v:i for i,v in enumerate(ADTYPES)})
+    return df
 
 # -------------------------
-# USER INPUT FORM
+# INPUT SECTION
 # -------------------------
-with st.form("prediction_form"):
-    st.subheader("📌 Campaign Inputs")
+left, right = st.columns([1.3,1])
 
-    age = st.number_input("Age", min_value=18, max_value=65, value=30)
-    gender = st.selectbox("Gender", ["Male", "Female"])
-    city = st.selectbox("City Tier", ["Tier 1", "Tier 2", "Tier 3"])
-    budget = st.number_input("Ad Budget ($)", min_value=100, max_value=100000, value=5000)
-    duration = st.number_input("Campaign Duration (days)", min_value=1, max_value=60, value=10)
-    platform = st.selectbox("Platform", ["Instagram", "YouTube", "Facebook", "LinkedIn"])
-    creatives = st.number_input("Number of Creatives", min_value=1, max_value=20, value=4)
-    cta_strength = st.selectbox("CTA Strength", ["Weak", "Moderate", "Strong"])
-    past_brand_strength = st.selectbox("Brand Strength", ["Low", "Medium", "High"])
+with left:
+    st.subheader("📂 Upload CSV File (Batch Prediction)")
+    csv_file = st.file_uploader("Upload CSV", type=["csv"])
+    df_input = None
 
-    submitted = st.form_submit_button("Predict Performance")
-
-
-# -------------------------
-# PROCESS INPUT & PREDICT
-# -------------------------
-if submitted:
-    if not all([model, scaler, le_target]):
-        st.error("❌ Model artifacts missing. Upload model files.")
-        st.stop()
-
-    # Convert categorical → numeric
-    cat_map = {
-        "Male": 0, "Female": 1,
-        "Tier 1": 1, "Tier 2": 2, "Tier 3": 3,
-        "Instagram": 1, "YouTube": 2, "Facebook": 3, "LinkedIn": 4,
-        "Weak": 1, "Moderate": 2, "Strong": 3,
-        "Low": 1, "Medium": 2, "High": 3
-    }
-
-    X = np.array([
-        age,
-        cat_map[gender],
-        cat_map[city],
-        budget,
-        duration,
-        cat_map[platform],
-        creatives,
-        cat_map[cta_strength],
-        cat_map[past_brand_strength]
-    ]).reshape(1, -1)
-
-    # Scale
-    X_scaled = scaler.transform(X)
-
-    # Predict class
-    y_pred = model.predict(X_scaled)[0]
-    label = le_target.inverse_transform([y_pred])[0]
-
-    # Predict probabilities
-    try:
-        probs = model.predict_proba(X_scaled)
-    except Exception:
-        probs = None
-
-    st.subheader("🎯 Prediction Result")
-    st.info(f"**Predicted Performance: {label}**")
-
-    # -------------------------
-    # SAFE PROBABILITY TABLE
-    # -------------------------
-    if probs is not None:
+    if csv_file:
         try:
-            probs = np.array(probs).flatten()
-            classes = list(le_target.classes_)
+            df_input = pd.read_csv(csv_file)
+            st.success(f"Loaded {csv_file.name} — {df_input.shape[0]} rows")
+            st.dataframe(df_input.head())
+        except:
+            st.error("Invalid CSV format.")
 
-            if len(probs) == len(classes):
-                prob_df = pd.DataFrame({
-                    "Class": classes,
-                    "Probability": probs
-                }).sort_values("Probability", ascending=False)
+    st.markdown("---")
+    st.subheader("✏ Manual Single Input")
 
-                st.subheader("📌 Prediction Probabilities")
+    with st.form("manual"):
+        Age = st.number_input("Age", 18, 65, 30)
+        Gender = st.selectbox("Gender", GENDERS)
+        City = st.selectbox("City", CITIES)
+        AdType = st.selectbox("Ad Type", ADTYPES)
+        Budget = st.number_input("Budget (₹)", 1000, 2000000, 50000)
+        DurationSec = st.number_input("Duration (sec)", 5, 180, 30)
+        Impressions = st.number_input("Impressions", 0, 10000000, 200000)
+        CTR = st.number_input("CTR (%)", 0.0, 100.0, 1.5)
+        Clicks = st.number_input("Clicks", 0, 1000000, int(Impressions*CTR/100))
+        ConversionRate = st.number_input("Conversion Rate (%)", 0.0, 100.0, 0.8)
+        Conversions = st.number_input("Conversions", 0, 1000000, int(Clicks*ConversionRate/100))
+        submit = st.form_submit_button("Use this input")
+
+        if submit:
+            df_input = pd.DataFrame([{
+                "Age":Age,"Gender":Gender,"City":City,"AdType":AdType,
+                "Budget":Budget,"DurationSec":DurationSec,"Impressions":Impressions,
+                "CTR":CTR,"Clicks":Clicks,"ConversionRate":ConversionRate,"Conversions":Conversions
+            }])
+            st.success("✅ Manual Record Loaded")
+            st.dataframe(df_input)
+
+# -------------------------
+# PREDICTION
+# -------------------------
+with right:
+    st.subheader("🎯 Prediction Output")
+
+    if df_input is not None and all([model, scaler, encoder]):
+        if st.button("Run Prediction"):
+            # Ensure correct columns
+            df_proc = df_input.copy()
+            df_proc = encode(df_proc)
+            df_proc = df_proc[FEATURES]
+
+            X = df_proc.astype(float).values
+            X_scaled = scaler.transform(X)
+
+            preds = model.predict(X_scaled)
+            labels = encoder.inverse_transform(preds)
+
+            st.success(f"📌 Predicted Performance: **{labels[0]}**")
+
+            # Probabilities
+            try:
+                probs = np.array(model.predict_proba(X_scaled)[0]).flatten()
+                classes = list(encoder.classes_)
+                prob_df = pd.DataFrame({"Class":classes,"Probability":probs}).sort_values("Probability",ascending=False)
+                st.subheader("📊 Prediction Probabilities")
                 st.dataframe(prob_df)
+            except:
+                st.warning("Model does not support predict_proba()")
+
+            # Batch download
+            if len(df_input) > 1:
+                df_out = df_input.copy()
+                df_out["Predicted_Performance"] = labels
+                st.download_button(
+                    "Download Predictions CSV",
+                    df_out.to_csv(index=False).encode("utf-8"),
+                    "predictions.csv",
+                    "text/csv"
+                )
+
+            # Gemini Insights
+            st.subheader("🤖 Gemini Insights")
+            if GEMINI_AVAILABLE and os.getenv("GEMINI_API_KEY"):
+                genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+                prompt = f"""
+                Ad Performance Prediction: {labels[0]}
+                Features: {df_input.iloc[0].to_dict()}
+
+                Provide:
+                1. Three reasons for this prediction
+                2. Three improvement suggestions
+                3. One catchy ad-line idea
+                Keep output concise.
+                """
+                try:
+                    response = genai.generate_text(
+                        model="gemini-2.0-flash-lite",
+                        prompt=prompt
+                    )
+                    st.write(response.text)
+                except Exception as e:
+                    st.error(f"Gemini Error: {e}")
             else:
-                st.warning("⚠ Probability output shape mismatch, cannot display probability table.")
+                st.info("Set GEMINI_API_KEY to enable insights.")
 
-        except Exception as e:
-            st.error(f"Failed to format probabilities: {e}")
-
-    st.success("✅ Prediction Complete!")
+# Footer
+st.markdown("---")
+st.caption("Built with ❤️ | Ad Campaign Performance Predictor")
