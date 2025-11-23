@@ -169,26 +169,34 @@ with right:
 
             st.success(f"📌 Predicted Performance: **{label}**")
 
-            # -------- SAFE PROBABILITIES --------
-            probs = None
-            if hasattr(model, "predict_proba"):
-                try:
-                    probs = model.predict_proba(X_scaled)[0]
-                except:
-                    probs = None
+            # -------- SAFE PROBABILITY HANDLING --------
+              # -------- SAFE PROBABILITY HANDLING --------
+probs = None
 
-            if probs is not None:
-                classes = list(encoder.classes_)
-                prob_df = pd.DataFrame({
-                    "Class": classes,
-                    "Probability": np.array(probs).flatten()
-                }).sort_values("Probability", ascending=False)
+# Check if model supports predict_proba
+if hasattr(model, "predict_proba"):
+    try:
+        probs_raw = model.predict_proba(X_scaled)
+        probs = np.array(probs_raw).flatten()
+    except:
+        probs = None
 
-                st.subheader("📊 Prediction Probabilities")
-                st.dataframe(prob_df)
-            else:
-                st.info("⚠ This model does not provide probability outputs.")
+if probs is not None:
+    classes = list(encoder.classes_)
 
+    # ✅ Only show if lengths match
+    if len(probs) == len(classes):
+        prob_df = pd.DataFrame({
+            "Class": classes,
+            "Probability": probs
+        }).sort_values("Probability", ascending=False)
+
+        st.subheader("📊 Prediction Probabilities")
+        st.dataframe(prob_df)
+    else:
+        st.info("⚠ Model returned incomplete probability data. Showing prediction only.")
+else:
+    st.info("⚠ This model does not provide probability outputs.")
             # -------- BATCH DOWNLOAD --------
             if len(df_input) > 1:
                 df_out = df_input.copy()
