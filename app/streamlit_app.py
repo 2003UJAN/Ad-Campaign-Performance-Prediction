@@ -101,7 +101,7 @@ def encode(df):
 # UI
 # -------------------------------------------------
 st.title("📊 Ad Campaign Performance Predictor")
-st.write("Predict **High / Medium / Low** ad performance using engagement & campaign attributes.")
+st.write("Predict **High / Medium / Low** ad performance using campaign features.")
 
 left, right = st.columns([1.3, 1])
 
@@ -169,35 +169,34 @@ with right:
 
             st.success(f"📌 Predicted Performance: **{label}**")
 
-            # -------- SAFE PROBABILITY HANDLING --------
-              # -------- SAFE PROBABILITY HANDLING --------
-probs = None
+            # ✅ SAFE PROBABILITY HANDLING
+            probs = None
 
-# Check if model supports predict_proba
-if hasattr(model, "predict_proba"):
-    try:
-        probs_raw = model.predict_proba(X_scaled)
-        probs = np.array(probs_raw).flatten()
-    except:
-        probs = None
+            if hasattr(model, "predict_proba"):
+                try:
+                    raw_probs = model.predict_proba(X_scaled)
+                    probs = np.array(raw_probs).flatten()
+                except:
+                    probs = None
 
-if probs is not None:
-    classes = list(encoder.classes_)
+            if probs is not None:
+                classes = list(encoder.classes_)
 
-    # ✅ Only show if lengths match
-    if len(probs) == len(classes):
-        prob_df = pd.DataFrame({
-            "Class": classes,
-            "Probability": probs
-        }).sort_values("Probability", ascending=False)
+                # ✅ Only if lengths match
+                if len(probs) == len(classes):
+                    prob_df = pd.DataFrame({
+                        "Class": classes,
+                        "Probability": probs
+                    }).sort_values("Probability", ascending=False)
 
-        st.subheader("📊 Prediction Probabilities")
-        st.dataframe(prob_df)
-    else:
-        st.info("⚠ Model returned incomplete probability data. Showing prediction only.")
-else:
-    st.info("⚠ This model does not provide probability outputs.")
-            # -------- BATCH DOWNLOAD --------
+                    st.subheader("📊 Prediction Probabilities")
+                    st.dataframe(prob_df)
+                else:
+                    st.info("⚠ Model returned incomplete probability data. Showing only class prediction.")
+            else:
+                st.info("⚠ This model does not support probability outputs.")
+
+            # ✅ BATCH CSV DOWNLOAD
             if len(df_input) > 1:
                 df_out = df_input.copy()
                 df_out["Predicted_Performance"] = encoder.inverse_transform(preds)
@@ -209,7 +208,7 @@ else:
                 )
                 st.dataframe(df_out.head())
 
-            # -------- GEMINI INSIGHTS --------
+            # ✅ GEMINI INSIGHTS
             st.subheader("🤖 Gemini Insights")
 
             if GEMINI_AVAILABLE and os.getenv("GEMINI_API_KEY"):
@@ -222,9 +221,9 @@ else:
                     Features: {df_input.iloc[0].to_dict()}
 
                     Provide:
-                    - 3 reasons for this prediction
-                    - 3 improvement suggestions
-                    - 1 short ad tagline
+                    ✅ 3 reasons for this performance
+                    ✅ 3 improvement suggestions
+                    ✅ 1 catchy ad tagline
                     """
 
                     response = model_g.generate_content(prompt)
